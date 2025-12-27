@@ -193,7 +193,6 @@ jobs:
           RABBITMQ_DEFAULT_USER: test
           RABBITMQ_DEFAULT_PASS: test
           RABBITMQ_DEFAULT_VHOST: /
-          RABBITMQ_DEFAULT_PERMISSIONS: ".* .* .*"
         options: >-
           --health-cmd "rabbitmq-diagnostics -q ping"
           --health-interval 10s
@@ -239,21 +238,49 @@ jobs:
             sleep 2
           done
           
+          # Wait a bit more for RabbitMQ to fully initialize
+          sleep 5
+          
           # Create /test vhost (ignore error if it already exists)
           echo "Creating /test vhost..."
-          docker exec $RABBITMQ_CONTAINER rabbitmqctl add_vhost /test 2>&1 || echo "Vhost /test may already exist"
+          if ! docker exec $RABBITMQ_CONTAINER rabbitmqctl add_vhost /test 2>&1; then
+            echo "Vhost /test may already exist, continuing..."
+          fi
           
           # Grant permissions to test user on /test vhost
           echo "Granting permissions to test user on /test vhost..."
-          docker exec $RABBITMQ_CONTAINER rabbitmqctl set_permissions -p /test test ".*" ".*" ".*" 2>&1 || {
-            echo "Failed to set permissions on /test vhost, trying again..."
-            sleep 2
-            docker exec $RABBITMQ_CONTAINER rabbitmqctl set_permissions -p /test test ".*" ".*" ".*" 2>&1
-          }
+          MAX_RETRIES=5
+          RETRY_COUNT=0
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if docker exec $RABBITMQ_CONTAINER rabbitmqctl set_permissions -p /test test ".*" ".*" ".*" 2>&1; then
+              echo "Permissions set successfully on /test vhost"
+              break
+            else
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                echo "Failed to set permissions (attempt $RETRY_COUNT/$MAX_RETRIES), retrying..."
+                sleep 3
+              else
+                echo "Failed to set permissions after $MAX_RETRIES attempts"
+                exit 1
+              fi
+            fi
+          done
+          
+          # Also ensure test user has permissions on default vhost
+          echo "Granting permissions to test user on default vhost..."
+          docker exec $RABBITMQ_CONTAINER rabbitmqctl set_permissions -p / test ".*" ".*" ".*" 2>&1 || echo "Note: Default vhost permissions may already be set"
           
           # Verify permissions were set
           echo "Verifying permissions on /test vhost..."
-          docker exec $RABBITMQ_CONTAINER rabbitmqctl list_permissions -p /test 2>&1 || echo "Could not list permissions (may be OK)"
+          docker exec $RABBITMQ_CONTAINER rabbitmqctl list_permissions -p /test 2>&1
+          echo ""
+          echo "Listing all vhosts:"
+          docker exec $RABBITMQ_CONTAINER rabbitmqctl list_vhosts 2>&1
+          echo ""
+          echo "Listing all users:"
+          docker exec $RABBITMQ_CONTAINER rabbitmqctl list_users 2>&1
+          echo ""
           echo "RabbitMQ is ready with vhosts configured"
       
       - name: Run integration tests
