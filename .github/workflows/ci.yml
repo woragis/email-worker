@@ -68,18 +68,27 @@ jobs:
           fi
           
           # Ensure values are set (handle empty strings)
-          PASSED=${PASSED:-"0"}
-          FAILED=${FAILED:-"0"}
-          COVERAGE=${COVERAGE:-"0%"}
+          PASSED=${PASSED:-0}
+          FAILED=${FAILED:-0}
+          COVERAGE=${COVERAGE:-0%}
           
           # Ensure values are valid (GitHub Actions requires non-empty strings)
-          if [ -z "$PASSED" ]; then PASSED="0"; fi
-          if [ -z "$FAILED" ]; then FAILED="0"; fi
-          if [ -z "$COVERAGE" ]; then COVERAGE="0%"; fi
+          if [ -z "$PASSED" ] || [ "$PASSED" = "" ]; then PASSED=0; fi
+          if [ -z "$FAILED" ] || [ "$FAILED" = "" ]; then FAILED=0; fi
+          if [ -z "$COVERAGE" ] || [ "$COVERAGE" = "" ]; then COVERAGE="0%"; fi
           
-          echo "passed=$PASSED" >> $GITHUB_OUTPUT
-          echo "failed=$FAILED" >> $GITHUB_OUTPUT
-          echo "coverage=$COVERAGE" >> $GITHUB_OUTPUT
+          # Write to GitHub output with proper formatting
+          {
+            echo "passed<<EOF"
+            echo "$PASSED"
+            echo "EOF"
+            echo "failed<<EOF"
+            echo "$FAILED"
+            echo "EOF"
+            echo "coverage<<EOF"
+            echo "$COVERAGE"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
       
       - name: Generate test report
         if: always()
@@ -251,18 +260,27 @@ jobs:
           fi
           
           # Ensure values are set (handle empty strings)
-          PASSED=${PASSED:-"0"}
-          FAILED=${FAILED:-"0"}
-          SKIPPED=${SKIPPED:-"0"}
+          PASSED=${PASSED:-0}
+          FAILED=${FAILED:-0}
+          SKIPPED=${SKIPPED:-0}
           
           # Ensure values are valid (GitHub Actions requires non-empty strings)
-          if [ -z "$PASSED" ]; then PASSED="0"; fi
-          if [ -z "$FAILED" ]; then FAILED="0"; fi
-          if [ -z "$SKIPPED" ]; then SKIPPED="0"; fi
+          if [ -z "$PASSED" ] || [ "$PASSED" = "" ]; then PASSED=0; fi
+          if [ -z "$FAILED" ] || [ "$FAILED" = "" ]; then FAILED=0; fi
+          if [ -z "$SKIPPED" ] || [ "$SKIPPED" = "" ]; then SKIPPED=0; fi
           
-          echo "passed=$PASSED" >> $GITHUB_OUTPUT
-          echo "failed=$FAILED" >> $GITHUB_OUTPUT
-          echo "skipped=$SKIPPED" >> $GITHUB_OUTPUT
+          # Write to GitHub output with proper formatting
+          {
+            echo "passed<<EOF"
+            echo "$PASSED"
+            echo "EOF"
+            echo "failed<<EOF"
+            echo "$FAILED"
+            echo "EOF"
+            echo "skipped<<EOF"
+            echo "$SKIPPED"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
       
       - name: Generate integration test report
         if: always()
