@@ -45,22 +45,25 @@ jobs:
           
           # Extract test summary from Go test output
           if [ -f test-output.log ]; then
-            # Count PASS lines (each package that passes)
-            PASSED=$(grep -c "^PASS$" test-output.log 2>/dev/null || echo "0")
-            # Count FAIL lines (each package that fails)
-            FAILED=$(grep -c "^FAIL$" test-output.log 2>/dev/null || echo "0")
+            # Count individual test functions first (more accurate)
+            PASSED=$(grep -c "--- PASS:" test-output.log 2>/dev/null || echo "0")
+            FAILED=$(grep -c "--- FAIL:" test-output.log 2>/dev/null || echo "0")
             
-            # Also try to count individual test functions
+            # If no individual test markers found, fall back to package-level counts
             if [ "$PASSED" = "0" ] && [ "$FAILED" = "0" ]; then
-              # Count test functions that passed (--- PASS: lines)
-              PASSED=$(grep -c "--- PASS:" test-output.log 2>/dev/null || echo "0")
-              # Count test functions that failed (--- FAIL: lines)
-              FAILED=$(grep -c "--- FAIL:" test-output.log 2>/dev/null || echo "0")
+              PASSED=$(grep -c "^PASS$" test-output.log 2>/dev/null || echo "0")
+              FAILED=$(grep -c "^FAIL$" test-output.log 2>/dev/null || echo "0")
             fi
             
             # Extract coverage from coverage.txt
             if [ -f coverage.txt ]; then
-              COVERAGE=$(grep -oP 'total:\s+\(statements\)\s+\K[\d.]+%' coverage.txt | head -1 || grep -oP 'total:\s+\K[\d.]+%' coverage.txt | head -1 || echo "0%")
+              # Go coverage format: "total: ... (statements) XX.X%"
+              # Extract the percentage after (statements)
+              COVERAGE=$(grep "total:" coverage.txt | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+\.[0-9]+%$/) print $i}' | head -1 || echo "0%")
+              if [ "$COVERAGE" = "0%" ] || [ -z "$COVERAGE" ]; then
+                # Try alternative: get the last field that contains %
+                COVERAGE=$(grep "total:" coverage.txt | awk '{print $NF}' | head -1 || echo "0%")
+              fi
             fi
           fi
           
@@ -68,6 +71,11 @@ jobs:
           PASSED=${PASSED:-"0"}
           FAILED=${FAILED:-"0"}
           COVERAGE=${COVERAGE:-"0%"}
+          
+          # Ensure values are valid (GitHub Actions requires non-empty strings)
+          if [ -z "$PASSED" ]; then PASSED="0"; fi
+          if [ -z "$FAILED" ]; then FAILED="0"; fi
+          if [ -z "$COVERAGE" ]; then COVERAGE="0%"; fi
           
           echo "passed=$PASSED" >> $GITHUB_OUTPUT
           echo "failed=$FAILED" >> $GITHUB_OUTPUT
@@ -134,14 +142,26 @@ jobs:
         if: always()
         run: |
           if [ -f coverage.txt ]; then
-            COVERAGE_PCT=$(grep -oP 'total:\s+\(statements\)\s+\K[\d.]+' coverage.txt | head -1 || grep -oP 'total:\s+\K[\d.]+' coverage.txt | head -1 || echo "0")
+            # Extract coverage percentage from coverage.txt
+            # Go format: "total: ... (statements) XX.X%"
+            COVERAGE_PCT=$(grep "total:" coverage.txt | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+\.[0-9]+%$/) print $i}' | sed 's/%//' | head -1 || echo "0")
+            if [ -z "$COVERAGE_PCT" ] || [ "$COVERAGE_PCT" = "0" ]; then
+              # Try alternative: get the last field and remove %
+              COVERAGE_PCT=$(grep "total:" coverage.txt | awk '{print $NF}' | sed 's/%//' | head -1 || echo "0")
+            fi
             COVERAGE_PCT=${COVERAGE_PCT%.*}  # Remove decimal
+            COVERAGE_PCT=${COVERAGE_PCT:-0}  # Default to 0 if empty
+            if [ -z "$COVERAGE_PCT" ]; then
+              COVERAGE_PCT=0
+            fi
             if [ "$COVERAGE_PCT" -lt 60 ]; then
               echo "⚠️ Coverage is below 60%: ${COVERAGE_PCT}%"
               exit 1
             else
               echo "✅ Coverage meets threshold: ${COVERAGE_PCT}%"
             fi
+          else
+            echo "⚠️ coverage.txt not found, skipping threshold check"
           fi
 
   integration-tests:
@@ -216,17 +236,14 @@ jobs:
           
           # Extract test summary from Go test output
           if [ -f test-output.log ]; then
-            # Count PASS lines (each package that passes)
-            PASSED=$(grep -c "^PASS$" test-output.log 2>/dev/null || echo "0")
-            # Count FAIL lines (each package that fails)
-            FAILED=$(grep -c "^FAIL$" test-output.log 2>/dev/null || echo "0")
+            # Count individual test functions first (more accurate)
+            PASSED=$(grep -c "--- PASS:" test-output.log 2>/dev/null || echo "0")
+            FAILED=$(grep -c "--- FAIL:" test-output.log 2>/dev/null || echo "0")
             
-            # Also try to count individual test functions
+            # If no individual test markers found, fall back to package-level counts
             if [ "$PASSED" = "0" ] && [ "$FAILED" = "0" ]; then
-              # Count test functions that passed (--- PASS: lines)
-              PASSED=$(grep -c "--- PASS:" test-output.log 2>/dev/null || echo "0")
-              # Count test functions that failed (--- FAIL: lines)
-              FAILED=$(grep -c "--- FAIL:" test-output.log 2>/dev/null || echo "0")
+              PASSED=$(grep -c "^PASS$" test-output.log 2>/dev/null || echo "0")
+              FAILED=$(grep -c "^FAIL$" test-output.log 2>/dev/null || echo "0")
             fi
             
             # Count skipped tests (if any)
@@ -237,6 +254,11 @@ jobs:
           PASSED=${PASSED:-"0"}
           FAILED=${FAILED:-"0"}
           SKIPPED=${SKIPPED:-"0"}
+          
+          # Ensure values are valid (GitHub Actions requires non-empty strings)
+          if [ -z "$PASSED" ]; then PASSED="0"; fi
+          if [ -z "$FAILED" ]; then FAILED="0"; fi
+          if [ -z "$SKIPPED" ]; then SKIPPED="0"; fi
           
           echo "passed=$PASSED" >> $GITHUB_OUTPUT
           echo "failed=$FAILED" >> $GITHUB_OUTPUT
