@@ -43,10 +43,21 @@ jobs:
           FAILED="0"
           COVERAGE="0%"
           
-          # Extract test summary from output
+          # Extract test summary from Go test output
           if [ -f test-output.log ]; then
-            PASSED=$(grep -oP '\d+(?= passed)' test-output.log | head -1 || echo "0")
-            FAILED=$(grep -oP '\d+(?= failed)' test-output.log | head -1 || echo "0")
+            # Count PASS lines (each package that passes)
+            PASSED=$(grep -c "^PASS$" test-output.log 2>/dev/null || echo "0")
+            # Count FAIL lines (each package that fails)
+            FAILED=$(grep -c "^FAIL$" test-output.log 2>/dev/null || echo "0")
+            
+            # Also try to count individual test functions
+            if [ "$PASSED" = "0" ] && [ "$FAILED" = "0" ]; then
+              # Count test functions that passed (--- PASS: lines)
+              PASSED=$(grep -c "--- PASS:" test-output.log 2>/dev/null || echo "0")
+              # Count test functions that failed (--- FAIL: lines)
+              FAILED=$(grep -c "--- FAIL:" test-output.log 2>/dev/null || echo "0")
+            fi
+            
             # Extract coverage from coverage.txt
             if [ -f coverage.txt ]; then
               COVERAGE=$(grep -oP 'total:\s+\(statements\)\s+\K[\d.]+%' coverage.txt | head -1 || grep -oP 'total:\s+\K[\d.]+%' coverage.txt | head -1 || echo "0%")
@@ -145,7 +156,7 @@ jobs:
         env:
           RABBITMQ_DEFAULT_USER: test
           RABBITMQ_DEFAULT_PASS: test
-          RABBITMQ_DEFAULT_VHOST: /test
+          RABBITMQ_DEFAULT_VHOST: /
         options: >-
           --health-cmd "rabbitmq-diagnostics -q ping"
           --health-interval 10s
@@ -169,13 +180,24 @@ jobs:
         run: |
           echo "Waiting for RabbitMQ to be ready..."
           # Wait for RabbitMQ to be ready (health check runs automatically)
-          sleep 10
-          echo "RabbitMQ should be ready now"
+          sleep 15
+          # Get the RabbitMQ container ID
+          RABBITMQ_CONTAINER=$(docker ps -q --filter ancestor=rabbitmq:3.13-management-alpine)
+          if [ -z "$RABBITMQ_CONTAINER" ]; then
+            echo "RabbitMQ container not found"
+            exit 1
+          fi
+          # Create /test vhost and grant permissions to test user
+          docker exec $RABBITMQ_CONTAINER rabbitmqctl add_vhost /test 2>/dev/null || echo "Vhost /test may already exist"
+          docker exec $RABBITMQ_CONTAINER rabbitmqctl set_permissions -p /test test ".*" ".*" ".*" 2>/dev/null || echo "Setting permissions for /test vhost"
+          # Also ensure test user has permissions on default vhost
+          docker exec $RABBITMQ_CONTAINER rabbitmqctl set_permissions -p / test ".*" ".*" ".*" 2>/dev/null || echo "Setting permissions for default vhost"
+          echo "RabbitMQ is ready with vhosts configured"
       
       - name: Run integration tests
         id: integration_tests
         env:
-          # Use the RabbitMQ service container
+          # Use the RabbitMQ service container (using /test vhost)
           RABBITMQ_URL: amqp://test:test@localhost:5673/test
           SMTP_HOST: ${{ secrets.SMTP_HOST || 'localhost' }}
           SMTP_FROM: ${{ secrets.SMTP_FROM || 'test@example.com' }}
@@ -192,11 +214,23 @@ jobs:
           FAILED="0"
           SKIPPED="0"
           
-          # Extract test summary from output
+          # Extract test summary from Go test output
           if [ -f test-output.log ]; then
-            PASSED=$(grep -oP '\d+(?= passed)' test-output.log | head -1 || echo "0")
-            FAILED=$(grep -oP '\d+(?= failed)' test-output.log | head -1 || echo "0")
-            SKIPPED=$(grep -oP '\d+(?= skipped)' test-output.log | head -1 || echo "0")
+            # Count PASS lines (each package that passes)
+            PASSED=$(grep -c "^PASS$" test-output.log 2>/dev/null || echo "0")
+            # Count FAIL lines (each package that fails)
+            FAILED=$(grep -c "^FAIL$" test-output.log 2>/dev/null || echo "0")
+            
+            # Also try to count individual test functions
+            if [ "$PASSED" = "0" ] && [ "$FAILED" = "0" ]; then
+              # Count test functions that passed (--- PASS: lines)
+              PASSED=$(grep -c "--- PASS:" test-output.log 2>/dev/null || echo "0")
+              # Count test functions that failed (--- FAIL: lines)
+              FAILED=$(grep -c "--- FAIL:" test-output.log 2>/dev/null || echo "0")
+            fi
+            
+            # Count skipped tests (if any)
+            SKIPPED=$(grep -c "SKIP:" test-output.log 2>/dev/null || echo "0")
           fi
           
           # Ensure values are set (handle empty strings)
