@@ -93,37 +93,44 @@ jobs:
       - name: Generate test report
         if: always()
         run: |
-          # Set defaults if outputs are empty
-          PASSED="${{ steps.parse_results.outputs.passed }}"
-          FAILED="${{ steps.parse_results.outputs.failed }}"
-          COVERAGE="${{ steps.parse_results.outputs.coverage }}"
+          # Set defaults if outputs are empty and clean values
+          PASSED=$(echo "${{ steps.parse_results.outputs.passed }}" | xargs | grep -oE '^[0-9]+$' || echo "0")
+          FAILED=$(echo "${{ steps.parse_results.outputs.failed }}" | xargs | grep -oE '^[0-9]+$' || echo "0")
+          COVERAGE=$(echo "${{ steps.parse_results.outputs.coverage }}" | xargs | grep -oE '^[0-9]+\.[0-9]+%$|^[0-9]+%$' || echo "0%")
           
-          PASSED=${PASSED:-"0"}
-          FAILED=${FAILED:-"0"}
-          COVERAGE=${COVERAGE:-"0%"}
+          # Final defaults
+          PASSED=${PASSED:-0}
+          FAILED=${FAILED:-0}
+          COVERAGE=${COVERAGE:-0%}
           
-          echo "## ✅ Unit Tests Report" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Test Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| ✅ Passed | $PASSED |" >> $GITHUB_STEP_SUMMARY
-          echo "| ❌ Failed | $FAILED |" >> $GITHUB_STEP_SUMMARY
-          echo "| 📊 Coverage | $COVERAGE |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## ✅ Unit Tests Report"
+            echo ""
+            echo "### Test Results"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|--------|-------|"
+            echo "| ✅ Passed | $PASSED |"
+            echo "| ❌ Failed | $FAILED |"
+            echo "| 📊 Coverage | $COVERAGE |"
+            echo ""
+          } >> $GITHUB_STEP_SUMMARY
           
-          if [ "$FAILED" != "0" ]; then
-            echo "### ⚠️ Test Failures Detected" >> $GITHUB_STEP_SUMMARY
-            echo "Check the test output above for details." >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "$FAILED" != "0" ] && [ "$FAILED" != "" ]; then
+            {
+              echo "### ⚠️ Test Failures Detected"
+              echo "Check the test output above for details."
+              echo ""
+            } >> $GITHUB_STEP_SUMMARY
           fi
           
           # Add coverage details if available
           if [ -f coverage.html ]; then
-            echo "### Coverage Details" >> $GITHUB_STEP_SUMMARY
-            echo "Coverage report is available in the artifacts section." >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
+            {
+              echo "### Coverage Details"
+              echo "Coverage report is available in the artifacts section."
+              echo ""
+            } >> $GITHUB_STEP_SUMMARY
           fi
       
       - name: Upload test logs
@@ -186,6 +193,7 @@ jobs:
           RABBITMQ_DEFAULT_USER: test
           RABBITMQ_DEFAULT_PASS: test
           RABBITMQ_DEFAULT_VHOST: /
+          RABBITMQ_DEFAULT_PERMISSIONS: ".* .* .*"
         options: >-
           --health-cmd "rabbitmq-diagnostics -q ping"
           --health-interval 10s
@@ -208,19 +216,44 @@ jobs:
       - name: Wait for RabbitMQ to be ready
         run: |
           echo "Waiting for RabbitMQ to be ready..."
-          # Wait for RabbitMQ to be ready (health check runs automatically)
-          sleep 15
           # Get the RabbitMQ container ID
           RABBITMQ_CONTAINER=$(docker ps -q --filter ancestor=rabbitmq:3.13-management-alpine)
           if [ -z "$RABBITMQ_CONTAINER" ]; then
             echo "RabbitMQ container not found"
             exit 1
           fi
-          # Create /test vhost and grant permissions to test user
-          docker exec $RABBITMQ_CONTAINER rabbitmqctl add_vhost /test 2>/dev/null || echo "Vhost /test may already exist"
-          docker exec $RABBITMQ_CONTAINER rabbitmqctl set_permissions -p /test test ".*" ".*" ".*" 2>/dev/null || echo "Setting permissions for /test vhost"
-          # Also ensure test user has permissions on default vhost
-          docker exec $RABBITMQ_CONTAINER rabbitmqctl set_permissions -p / test ".*" ".*" ".*" 2>/dev/null || echo "Setting permissions for default vhost"
+          echo "RabbitMQ container ID: $RABBITMQ_CONTAINER"
+          
+          # Wait for RabbitMQ to be fully ready (can execute commands)
+          echo "Waiting for RabbitMQ to accept commands..."
+          for i in {1..30}; do
+            if docker exec $RABBITMQ_CONTAINER rabbitmqctl status >/dev/null 2>&1; then
+              echo "RabbitMQ is ready"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "RabbitMQ did not become ready in time"
+              exit 1
+            fi
+            echo "Waiting for RabbitMQ... ($i/30)"
+            sleep 2
+          done
+          
+          # Create /test vhost (ignore error if it already exists)
+          echo "Creating /test vhost..."
+          docker exec $RABBITMQ_CONTAINER rabbitmqctl add_vhost /test 2>&1 || echo "Vhost /test may already exist"
+          
+          # Grant permissions to test user on /test vhost
+          echo "Granting permissions to test user on /test vhost..."
+          docker exec $RABBITMQ_CONTAINER rabbitmqctl set_permissions -p /test test ".*" ".*" ".*" 2>&1 || {
+            echo "Failed to set permissions on /test vhost, trying again..."
+            sleep 2
+            docker exec $RABBITMQ_CONTAINER rabbitmqctl set_permissions -p /test test ".*" ".*" ".*" 2>&1
+          }
+          
+          # Verify permissions were set
+          echo "Verifying permissions on /test vhost..."
+          docker exec $RABBITMQ_CONTAINER rabbitmqctl list_permissions -p /test 2>&1 || echo "Could not list permissions (may be OK)"
           echo "RabbitMQ is ready with vhosts configured"
       
       - name: Run integration tests
@@ -285,25 +318,28 @@ jobs:
       - name: Generate integration test report
         if: always()
         run: |
-          # Set defaults if outputs are empty
-          PASSED="${{ steps.parse_integration_results.outputs.passed }}"
-          FAILED="${{ steps.parse_integration_results.outputs.failed }}"
-          SKIPPED="${{ steps.parse_integration_results.outputs.skipped }}"
+          # Set defaults if outputs are empty and clean values
+          PASSED=$(echo "${{ steps.parse_integration_results.outputs.passed }}" | xargs | grep -oE '^[0-9]+$' || echo "0")
+          FAILED=$(echo "${{ steps.parse_integration_results.outputs.failed }}" | xargs | grep -oE '^[0-9]+$' || echo "0")
+          SKIPPED=$(echo "${{ steps.parse_integration_results.outputs.skipped }}" | xargs | grep -oE '^[0-9]+$' || echo "0")
           
-          PASSED=${PASSED:-"0"}
-          FAILED=${FAILED:-"0"}
-          SKIPPED=${SKIPPED:-"0"}
+          # Final defaults
+          PASSED=${PASSED:-0}
+          FAILED=${FAILED:-0}
+          SKIPPED=${SKIPPED:-0}
           
-          echo "## 🔗 Integration Tests Report" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Test Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| ✅ Passed | $PASSED |" >> $GITHUB_STEP_SUMMARY
-          echo "| ❌ Failed | $FAILED |" >> $GITHUB_STEP_SUMMARY
-          echo "| ⏭️ Skipped | $SKIPPED |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## 🔗 Integration Tests Report"
+            echo ""
+            echo "### Test Results"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|--------|-------|"
+            echo "| ✅ Passed | $PASSED |"
+            echo "| ❌ Failed | $FAILED |"
+            echo "| ⏭️ Skipped | $SKIPPED |"
+            echo ""
+          } >> $GITHUB_STEP_SUMMARY
           
           if [ "$FAILED" != "0" ]; then
             echo "### ⚠️ Integration Test Failures" >> $GITHUB_STEP_SUMMARY
