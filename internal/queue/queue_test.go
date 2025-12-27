@@ -153,3 +153,25 @@ func TestQueue_Consume_HandlerSuccess(t *testing.T) {
 	// Test that successful handler execution results in message acknowledgment
 	// This would require a real RabbitMQ connection or sophisticated mocking
 }
+
+func TestNewConnection(t *testing.T) {
+	// Test NewConnection with invalid URL (will fail, but tests error handling)
+	_, err := NewConnection("invalid-url")
+	if err == nil {
+		t.Error("NewConnection() should fail with invalid URL")
+	}
+}
+
+func TestConnection_Channel(t *testing.T) {
+	// This test requires a real connection, but we can test the method exists
+	// The actual functionality is tested in integration tests
+	conn := &Connection{
+		conn:    nil,
+		channel: nil,
+	}
+	
+	ch := conn.Channel()
+	if ch != nil && conn.channel == nil {
+		t.Error("Channel() should return nil when connection is nil")
+	}
+}

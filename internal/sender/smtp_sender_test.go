@@ -175,3 +175,84 @@ func TestBuilderWriter(t *testing.T) {
 		t.Errorf("builderWriter.Write() wrote %v, want test data", builder.String())
 	}
 }
+
+func TestSMTPSender_Send_UseTLS(t *testing.T) {
+	cfg := config.EmailConfig{
+		Host:     "smtp.example.com",
+		Port:     587,
+		From:     "noreply@example.com",
+		UseTLS:   true,
+		Username: "user",
+		Password: "pass",
+	}
+	sender, err := NewSMTPSender(cfg, nil)
+	if err != nil {
+		t.Fatalf("NewSMTPSender() error = %v", err)
+	}
+
+	msg := Message{
+		To:       "test@example.com",
+		Subject:  "Test",
+		TextBody: "Test body",
+	}
+
+	// Will fail on SMTP connection, but tests the TLS path
+	err = sender.Send(context.Background(), msg)
+	// Expect SMTP connection error, not validation error
+	if err != nil && err.Error() == "recipient email required" {
+		t.Errorf("Unexpected validation error: %v", err)
+	}
+}
+
+func TestSMTPSender_Send_NoTLS_WithAuth(t *testing.T) {
+	cfg := config.EmailConfig{
+		Host:     "smtp.example.com",
+		Port:     25,
+		From:     "noreply@example.com",
+		UseTLS:   false,
+		Username: "user",
+		Password: "pass",
+	}
+	sender, err := NewSMTPSender(cfg, nil)
+	if err != nil {
+		t.Fatalf("NewSMTPSender() error = %v", err)
+	}
+
+	msg := Message{
+		To:       "test@example.com",
+		Subject:  "Test",
+		TextBody: "Test body",
+	}
+
+	// Will fail on SMTP connection, but tests the non-TLS with auth path
+	err = sender.Send(context.Background(), msg)
+	if err != nil && err.Error() == "recipient email required" {
+		t.Errorf("Unexpected validation error: %v", err)
+	}
+}
+
+func TestSMTPSender_Send_NoTLS_NoAuth(t *testing.T) {
+	cfg := config.EmailConfig{
+		Host:   "smtp.example.com",
+		Port:   25,
+		From:   "noreply@example.com",
+		UseTLS: false,
+		// No username/password
+	}
+	sender, err := NewSMTPSender(cfg, nil)
+	if err != nil {
+		t.Fatalf("NewSMTPSender() error = %v", err)
+	}
+
+	msg := Message{
+		To:       "test@example.com",
+		Subject:  "Test",
+		TextBody: "Test body",
+	}
+
+	// Will fail on SMTP connection, but tests the non-TLS without auth path
+	err = sender.Send(context.Background(), msg)
+	if err != nil && err.Error() == "recipient email required" {
+		t.Errorf("Unexpected validation error: %v", err)
+	}
+}

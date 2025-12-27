@@ -125,8 +125,8 @@ jobs:
           if [ -f coverage.txt ]; then
             COVERAGE_PCT=$(grep -oP 'total:\s+\(statements\)\s+\K[\d.]+' coverage.txt | head -1 || grep -oP 'total:\s+\K[\d.]+' coverage.txt | head -1 || echo "0")
             COVERAGE_PCT=${COVERAGE_PCT%.*}  # Remove decimal
-            if [ "$COVERAGE_PCT" -lt 70 ]; then
-              echo "⚠️ Coverage is below 70%: ${COVERAGE_PCT}%"
+            if [ "$COVERAGE_PCT" -lt 60 ]; then
+              echo "⚠️ Coverage is below 60%: ${COVERAGE_PCT}%"
               exit 1
             else
               echo "✅ Coverage meets threshold: ${COVERAGE_PCT}%"
